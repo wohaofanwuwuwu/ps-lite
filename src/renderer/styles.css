@@ -116,6 +116,12 @@ button:disabled {
   gap: 4px;
 }
 
+.brand-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .brand span,
 .hint,
 .layer-main span,

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import { rgbaToHex } from '../utils/color'
-import { compositeLayers, drawLine, fillCanvas } from '../utils/canvas'
-import type { CropRect, LayerModel, Point } from '../types'
+import { applyLayerTransform, compositeLayers, drawLine, fillCanvas, toLayerLocalPoint } from '../utils/canvas'
+import type { CropRect, Point } from '../types'
 
 interface EditorCanvasProps {
   compositeCanvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -53,11 +53,6 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
   const moveStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null)
   const panStartRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null)
   const spacePressedRef = useRef(false)
-
-  const toLayerPoint = (layer: LayerModel, point: Point): Point => ({
-    x: (point.x - layer.offsetX) / layer.scale,
-    y: (point.y - layer.offsetY) / layer.scale,
-  })
 
   useEffect(() => {
     if (!currentTask) {
@@ -135,7 +130,7 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       ctx.restore()
     }
 
-    if (hoverPoint && activeTool === 'brush') {
+    if (hoverPoint && (activeTool === 'brush' || activeTool === 'eraser')) {
       ctx.save()
       ctx.strokeStyle = '#ffffff'
       ctx.lineWidth = 1
@@ -150,12 +145,8 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       ctx.strokeStyle = '#f8fafc'
       ctx.lineWidth = 1.5
       ctx.setLineDash([8, 6])
-      ctx.strokeRect(
-        currentLayer.offsetX,
-        currentLayer.offsetY,
-        currentLayer.canvas.width * currentLayer.scale,
-        currentLayer.canvas.height * currentLayer.scale,
-      )
+      applyLayerTransform(ctx, currentLayer)
+      ctx.strokeRect(0, 0, currentLayer.canvas.width, currentLayer.canvas.height)
       ctx.restore()
     }
   }, [activeTool, brushSize, canvasHeight, canvasWidth, currentLayer, currentTask, hoverPoint, pendingCrop, renderVersion])
@@ -203,9 +194,37 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
         return
       }
       drawingRef.current = true
-      lastPointRef.current = toLayerPoint(currentLayer, point)
+      lastPointRef.current = toLayerLocalPoint(currentLayer, point)
       recordHistory()
-      mutateCurrentLayer((layer) => drawLine(layer.canvas, toLayerPoint(layer, point), toLayerPoint(layer, point), color, brushSize / layer.scale))
+      mutateCurrentLayer((layer) =>
+        drawLine(
+          layer.canvas,
+          toLayerLocalPoint(layer, point),
+          toLayerLocalPoint(layer, point),
+          color,
+          brushSize / layer.scale,
+        ),
+      )
+      return
+    }
+
+    if (activeTool === 'eraser') {
+      if (!currentLayer) {
+        return
+      }
+      drawingRef.current = true
+      lastPointRef.current = toLayerLocalPoint(currentLayer, point)
+      recordHistory()
+      mutateCurrentLayer((layer) =>
+        drawLine(
+          layer.canvas,
+          toLayerLocalPoint(layer, point),
+          toLayerLocalPoint(layer, point),
+          '#000000',
+          brushSize / layer.scale,
+          'destination-out',
+        ),
+      )
       return
     }
 
@@ -224,7 +243,7 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       if (!currentLayer) {
         return
       }
-      const localPoint = toLayerPoint(currentLayer, point)
+      const localPoint = toLayerLocalPoint(currentLayer, point)
       recordHistory()
       mutateCurrentLayer((layer) =>
         fillCanvas(layer.canvas, localPoint, [
@@ -277,14 +296,23 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       return
     }
 
-    if (activeTool === 'brush' && drawingRef.current && lastPointRef.current) {
+    if ((activeTool === 'brush' || activeTool === 'eraser') && drawingRef.current && lastPointRef.current) {
       const start = lastPointRef.current
       if (!currentLayer) {
         return
       }
-      const localPoint = toLayerPoint(currentLayer, point)
+      const localPoint = toLayerLocalPoint(currentLayer, point)
       lastPointRef.current = localPoint
-      mutateCurrentLayer((layer) => drawLine(layer.canvas, start, localPoint, color, brushSize / layer.scale))
+      mutateCurrentLayer((layer) =>
+        drawLine(
+          layer.canvas,
+          start,
+          localPoint,
+          activeTool === 'eraser' ? '#000000' : color,
+          brushSize / layer.scale,
+          activeTool === 'eraser' ? 'destination-out' : 'source-over',
+        ),
+      )
       return
     }
 

@@ -1,4 +1,4 @@
-export type ToolType = 'move' | 'brush' | 'eyedropper' | 'fill' | 'crop'
+export type ToolType = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'fill' | 'crop'
 
 export interface Point {
   x: number
@@ -22,6 +22,7 @@ export interface LayerSnapshot {
   offsetX: number
   offsetY: number
   scale: number
+  rotation: number
   imageData: ImageData
 }
 
@@ -35,6 +36,7 @@ export interface LayerModel {
   offsetX: number
   offsetY: number
   scale: number
+  rotation: number
   canvas: HTMLCanvasElement
 }
 
@@ -66,4 +68,34 @@ export interface EditorTask {
 export interface ClipboardLayer {
   name: string
   snapshot: LayerSnapshot
+}
+
+export interface ProjectLayerData {
+  id: string
+  name: string
+  visible: boolean
+  opacity: number
+  width: number
+  height: number
+  offsetX: number
+  offsetY: number
+  scale: number
+  rotation: number
+  image: string
+}
+
+export interface ProjectTaskData {
+  id: string
+  name: string
+  canvasWidth: number
+  canvasHeight: number
+  currentLayerId: string
+  lastExportPath: string | null
+  layers: ProjectLayerData[]
+}
+
+export interface ProjectFileData {
+  version: 1
+  activeTaskId: string
+  tasks: ProjectTaskData[]
 }

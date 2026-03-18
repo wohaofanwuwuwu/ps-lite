@@ -12,6 +12,9 @@ import { clamp } from '../utils/color'
 import {
   createLayer,
   cropLayerCanvas,
+  getLayerMatrix,
+  invertMatrix,
+  multiplyMatrices,
   resizeLayerCanvas,
   restoreLayer,
   snapshotLayer,
@@ -26,6 +29,7 @@ interface EditorState {
   recentColors: string[]
   statusMessage: string
   clipboard: ClipboardLayer | null
+  currentProjectPath: string | null
   setActiveTask: (taskId: string) => void
   createTask: (name?: string, width?: number, height?: number) => void
   createTaskFromImage: (name: string, source: CanvasImageSource, width: number, height: number) => void
@@ -48,14 +52,17 @@ interface EditorState {
   deleteCurrentLayer: () => void
   toggleLayerVisibility: (layerId: string) => void
   reorderLayers: (layerIds: string[]) => void
+  mergeCurrentLayerDown: () => void
   mutateCurrentLayer: (mutate: (layer: LayerModel) => void) => void
-  setCurrentLayerTransform: (transform: { offsetX?: number; offsetY?: number; scale?: number }) => void
+  setCurrentLayerTransform: (transform: { offsetX?: number; offsetY?: number; scale?: number; rotation?: number }) => void
   recordHistory: () => void
   undo: () => void
   redo: () => void
   applyCrop: () => void
   copyCurrentLayer: () => void
   pasteClipboard: () => void
+  loadProjectState: (tasks: EditorTask[], activeTaskId: string, filePath: string | null) => void
+  setProjectPath: (filePath: string | null) => void
 }
 
 let layerCounter = 1
@@ -69,6 +76,19 @@ const nextLayerId = () => {
 const nextTaskId = () => {
   taskCounter += 1
   return `task-${taskCounter}`
+}
+
+const syncCountersFromTasks = (tasks: EditorTask[]) => {
+  const taskIds = tasks
+    .map((task) => Number.parseInt(task.id.replace('task-', ''), 10))
+    .filter((value) => Number.isFinite(value))
+  const layerIds = tasks
+    .flatMap((task) => task.layers)
+    .map((layer) => Number.parseInt(layer.id.replace('layer-', ''), 10))
+    .filter((value) => Number.isFinite(value))
+
+  taskCounter = Math.max(taskCounter, ...(taskIds.length ? taskIds : [taskCounter]))
+  layerCounter = Math.max(layerCounter, ...(layerIds.length ? layerIds : [layerCounter]))
 }
 
 const createBlankTask = (name = `任务 ${taskCounter}`, width = 1024, height = 768): EditorTask => {
@@ -162,6 +182,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   recentColors: ['#111111', '#ef4444', '#22c55e', '#3b82f6', '#f59e0b'],
   statusMessage: 'Ready',
   clipboard: null,
+  currentProjectPath: null,
   setActiveTask: (taskId) => set({ activeTaskId: taskId }),
   createTask: (name, width = 1024, height = 768) =>
     set((state) => {
@@ -312,6 +333,47 @@ export const useEditorStore = create<EditorState>((set) => ({
         }
       }),
     ),
+  mergeCurrentLayerDown: () =>
+    set((state) =>
+      updateActiveTask(state, (task) => {
+        const sourceIndex = task.layers.findIndex((layer) => layer.id === task.currentLayerId)
+        if (sourceIndex <= 0) {
+          return task
+        }
+
+        const sourceLayer = task.layers[sourceIndex]
+        const targetLayer = task.layers[sourceIndex - 1]
+        const targetContext = targetLayer.canvas.getContext('2d')
+        if (!targetContext) {
+          return task
+        }
+
+        targetContext.save()
+        const relativeMatrix = multiplyMatrices(
+          invertMatrix(getLayerMatrix(targetLayer)),
+          getLayerMatrix(sourceLayer),
+        )
+        targetContext.transform(
+          relativeMatrix.a,
+          relativeMatrix.b,
+          relativeMatrix.c,
+          relativeMatrix.d,
+          relativeMatrix.e,
+          relativeMatrix.f,
+        )
+        targetContext.globalAlpha = sourceLayer.opacity
+        targetContext.drawImage(sourceLayer.canvas, 0, 0)
+        targetContext.restore()
+
+        const nextLayers = task.layers.filter((layer) => layer.id !== sourceLayer.id)
+        return {
+          ...task,
+          layers: nextLayers,
+          currentLayerId: targetLayer.id,
+          renderVersion: task.renderVersion + 1,
+        }
+      }),
+    ),
   mutateCurrentLayer: (mutate) =>
     set((state) =>
       updateActiveTask(state, (task) => ({
@@ -339,6 +401,7 @@ export const useEditorStore = create<EditorState>((set) => ({
             offsetX: transform.offsetX ?? layer.offsetX,
             offsetY: transform.offsetY ?? layer.offsetY,
             scale: clamp(transform.scale ?? layer.scale, 0.1, 8),
+            rotation: ((transform.rotation ?? layer.rotation) % 360 + 360) % 360,
           }
         }),
         renderVersion: task.renderVersion + 1,
@@ -443,4 +506,16 @@ export const useEditorStore = create<EditorState>((set) => ({
         statusMessage: `已粘贴到当前任务`,
       }
     }),
+  loadProjectState: (tasks, activeTaskId, filePath) =>
+    set(() => {
+      syncCountersFromTasks(tasks)
+      return {
+        tasks,
+        activeTaskId,
+        currentProjectPath: filePath,
+        clipboard: null,
+        statusMessage: filePath ? `已打开 ${filePath.split(/[/\\]/).pop()}` : '已加载工程',
+      }
+    }),
+  setProjectPath: (filePath) => set({ currentProjectPath: filePath }),
 }))

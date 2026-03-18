@@ -26,6 +26,7 @@ export const createLayer = (width: number, height: number, name: string, id: str
   offsetX: 0,
   offsetY: 0,
   scale: 1,
+  rotation: 0,
   canvas: createCanvas(width, height),
 })
 
@@ -55,6 +56,7 @@ export const snapshotLayer = (layer: LayerModel): LayerSnapshot => {
     offsetX: layer.offsetX,
     offsetY: layer.offsetY,
     scale: layer.scale,
+    rotation: layer.rotation,
     imageData,
   }
 }
@@ -73,8 +75,77 @@ export const restoreLayer = (snapshot: LayerSnapshot): LayerModel => {
     offsetX: snapshot.offsetX,
     offsetY: snapshot.offsetY,
     scale: snapshot.scale,
+    rotation: snapshot.rotation,
     canvas,
   }
+}
+
+export interface Matrix2D {
+  a: number
+  b: number
+  c: number
+  d: number
+  e: number
+  f: number
+}
+
+const degreesToRadians = (degrees: number) => (degrees * Math.PI) / 180
+
+export const getLayerMatrix = (layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>): Matrix2D => {
+  const radians = degreesToRadians(layer.rotation)
+  const cos = Math.cos(radians) * layer.scale
+  const sin = Math.sin(radians) * layer.scale
+  return {
+    a: cos,
+    b: sin,
+    c: -sin,
+    d: cos,
+    e: layer.offsetX,
+    f: layer.offsetY,
+  }
+}
+
+export const invertMatrix = (matrix: Matrix2D): Matrix2D => {
+  const det = matrix.a * matrix.d - matrix.b * matrix.c
+  if (!det) {
+    return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }
+  }
+  return {
+    a: matrix.d / det,
+    b: -matrix.b / det,
+    c: -matrix.c / det,
+    d: matrix.a / det,
+    e: (matrix.c * matrix.f - matrix.d * matrix.e) / det,
+    f: (matrix.b * matrix.e - matrix.a * matrix.f) / det,
+  }
+}
+
+export const multiplyMatrices = (left: Matrix2D, right: Matrix2D): Matrix2D => ({
+  a: left.a * right.a + left.c * right.b,
+  b: left.b * right.a + left.d * right.b,
+  c: left.a * right.c + left.c * right.d,
+  d: left.b * right.c + left.d * right.d,
+  e: left.a * right.e + left.c * right.f + left.e,
+  f: left.b * right.e + left.d * right.f + left.f,
+})
+
+export const toLayerLocalPoint = (
+  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>,
+  point: Point,
+): Point => {
+  const matrix = invertMatrix(getLayerMatrix(layer))
+  return {
+    x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+    y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+  }
+}
+
+export const applyLayerTransform = (
+  ctx: CanvasRenderingContext2D,
+  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>,
+) => {
+  const matrix = getLayerMatrix(layer)
+  ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
 }
 
 export const compositeLayers = (
@@ -97,8 +168,7 @@ export const compositeLayers = (
     }
     ctx.save()
     ctx.globalAlpha = layer.opacity
-    ctx.translate(layer.offsetX, layer.offsetY)
-    ctx.scale(layer.scale, layer.scale)
+    applyLayerTransform(ctx, layer)
     ctx.drawImage(layer.canvas, 0, 0)
     ctx.restore()
   }
@@ -111,12 +181,15 @@ export const drawLine = (
   end: Point,
   color: string,
   size: number,
+  compositeOperation: GlobalCompositeOperation = 'source-over',
 ) => {
   const ctx = canvas.getContext('2d')
   if (!ctx) {
     return
   }
 
+  ctx.save()
+  ctx.globalCompositeOperation = compositeOperation
   ctx.strokeStyle = color
   ctx.lineWidth = size
   ctx.lineCap = 'round'
@@ -125,6 +198,7 @@ export const drawLine = (
   ctx.moveTo(start.x, start.y)
   ctx.lineTo(end.x, end.y)
   ctx.stroke()
+  ctx.restore()
 }
 
 export const fillCanvas = (canvas: HTMLCanvasElement, point: Point, color: [number, number, number, number]) => {

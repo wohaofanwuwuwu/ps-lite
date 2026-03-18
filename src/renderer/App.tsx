@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorCanvas } from './editor/components/EditorCanvas'
 import { useEditorStore } from './editor/store/editorStore'
 import type { ToolType } from './editor/types'
+import { deserializeProject, serializeProject } from './editor/utils/project'
 
 const toolLabels: Record<ToolType, string> = {
   move: '移动',
   brush: '画笔',
+  eraser: '橡皮',
   eyedropper: '取色',
   fill: '填充',
   crop: '裁剪',
@@ -57,6 +59,7 @@ export default function App() {
     brushSize,
     recentColors,
     statusMessage,
+    currentProjectPath,
     setActiveTask,
     createTask,
     createTaskFromImage,
@@ -71,6 +74,7 @@ export default function App() {
     deleteCurrentLayer,
     toggleLayerVisibility,
     reorderLayers,
+    mergeCurrentLayerDown,
     setCurrentLayerTransform,
     recordHistory,
     undo,
@@ -81,6 +85,8 @@ export default function App() {
     applyCrop,
     copyCurrentLayer,
     pasteClipboard,
+    loadProjectState,
+    setProjectPath,
   } = useEditorStore()
 
   const currentTask = useMemo(
@@ -89,6 +95,12 @@ export default function App() {
   )
   const orderedLayers = useMemo(() => [...(currentTask?.layers ?? [])].reverse(), [currentTask?.layers])
   const currentLayer = currentTask?.layers.find((layer) => layer.id === currentTask.currentLayerId) ?? null
+  const canMergeCurrentLayerDown = useMemo(() => {
+    if (!currentTask || !currentLayer) {
+      return false
+    }
+    return currentTask.layers.findIndex((layer) => layer.id === currentLayer.id) > 0
+  }, [currentLayer, currentTask])
 
   const handleLayerDrop = (targetLayerId: string) => {
     if (!draggedLayerId || draggedLayerId === targetLayerId) {
@@ -226,6 +238,45 @@ export default function App() {
     }
   }
 
+  const handleSaveProject = async () => {
+    try {
+      if (!window.electronApi) {
+        setStatusMessage('当前环境不支持工程文件读写')
+        return
+      }
+      const targetPath = currentProjectPath ?? (await window.electronApi.chooseProjectSavePath())
+      if (!targetPath) {
+        setStatusMessage('未选择工程保存路径')
+        return
+      }
+      const project = serializeProject(tasks, activeTaskId)
+      await window.electronApi.saveProject(targetPath, JSON.stringify(project))
+      setProjectPath(targetPath)
+      setStatusMessage(`已保存工程 ${getBaseName(targetPath)}`)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : '保存工程失败')
+    }
+  }
+
+  const handleOpenProject = async () => {
+    try {
+      if (!window.electronApi) {
+        setStatusMessage('当前环境不支持工程文件读写')
+        return
+      }
+      const result = await window.electronApi.openProject()
+      if (!result) {
+        setStatusMessage('已取消打开工程')
+        return
+      }
+      const parsed = JSON.parse(result.content)
+      const restored = await deserializeProject(parsed)
+      loadProjectState(restored.tasks, restored.activeTaskId, result.filePath)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : '打开工程失败')
+    }
+  }
+
   const importDroppedFiles = async (files: FileList | File[]) => {
     const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'))
     if (imageFiles.length === 0) {
@@ -296,6 +347,10 @@ export default function App() {
         <div className="brand">
           <strong>PS Lite</strong>
           <span>桌面版最小可用图像编辑器</span>
+          <div className="brand-actions">
+            <button onClick={() => void handleOpenProject()}>打开工程</button>
+            <button onClick={() => void handleSaveProject()}>保存工程</button>
+          </div>
         </div>
         <div className="action-row">
           <button onClick={() => void handleExport()}>导出 PNG</button>
@@ -458,6 +513,22 @@ export default function App() {
                   >
                     右
                   </button>
+                  <button
+                    onClick={() => {
+                      recordHistory()
+                      setCurrentLayerTransform({ rotation: currentLayer.rotation - 15 })
+                    }}
+                  >
+                    左旋
+                  </button>
+                  <button
+                    onClick={() => {
+                      recordHistory()
+                      setCurrentLayerTransform({ rotation: currentLayer.rotation + 15 })
+                    }}
+                  >
+                    右旋
+                  </button>
                 </div>
                 <label className="field compact">
                   <span>横向位置</span>
@@ -486,10 +557,21 @@ export default function App() {
                     value={currentLayer.scale}
                   />
                 </label>
+                <label className="field compact">
+                  <span>旋转 {Math.round(currentLayer.rotation)}°</span>
+                  <input
+                    max={360}
+                    min={0}
+                    onChange={(event) => setCurrentLayerTransform({ rotation: Number(event.target.value) })}
+                    step={1}
+                    type="range"
+                    value={currentLayer.rotation}
+                  />
+                </label>
                 <button
                   onClick={() => {
                     recordHistory()
-                    setCurrentLayerTransform({ offsetX: 0, offsetY: 0, scale: 1 })
+                    setCurrentLayerTransform({ offsetX: 0, offsetY: 0, scale: 1, rotation: 0 })
                   }}
                 >
                   重置变换
@@ -519,11 +601,20 @@ export default function App() {
                 >
                   删除
                 </button>
+                <button
+                  disabled={!canMergeCurrentLayerDown}
+                  onClick={() => {
+                    recordHistory()
+                    mergeCurrentLayerDown()
+                  }}
+                >
+                  融合下层
+                </button>
               </div>
             </div>
 
             <div className="action-row">
-              <span className="hint">拖拽图层项调整上下顺序</span>
+              <span className="hint">拖拽图层项调整上下顺序，融合会把当前层烘焙进下层。</span>
             </div>
 
             <div className="layer-list">
