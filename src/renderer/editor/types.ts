@@ -1,4 +1,5 @@
-export type ToolType = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'fill' | 'crop'
+export type ToolType = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'fill' | 'crop' | 'text'
+export type LayerKind = 'bitmap' | 'text'
 
 export interface Point {
   x: number
@@ -12,31 +13,44 @@ export interface CropRect {
   height: number
 }
 
+export interface TextLayerData {
+  content: string
+  fontSize: number
+  color: string
+  fontFamily: string
+}
+
 export interface LayerSnapshot {
   id: string
   name: string
+  type: LayerKind
   visible: boolean
   opacity: number
   width: number
   height: number
   offsetX: number
   offsetY: number
-  scale: number
+  scaleX: number
+  scaleY: number
   rotation: number
+  textData: TextLayerData | null
   imageData: ImageData
 }
 
 export interface LayerModel {
   id: string
   name: string
+  type: LayerKind
   visible: boolean
   opacity: number
   width: number
   height: number
   offsetX: number
   offsetY: number
-  scale: number
+  scaleX: number
+  scaleY: number
   rotation: number
+  textData: TextLayerData | null
   canvas: HTMLCanvasElement
 }
 
@@ -73,14 +87,18 @@ export interface ClipboardLayer {
 export interface ProjectLayerData {
   id: string
   name: string
+  type?: LayerKind
   visible: boolean
   opacity: number
   width: number
   height: number
   offsetX: number
   offsetY: number
-  scale: number
+  scale?: number
+  scaleX?: number
+  scaleY?: number
   rotation: number
+  textData?: TextLayerData | null
   image: string
 }
 

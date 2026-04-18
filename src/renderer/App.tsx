@@ -11,6 +11,7 @@ const toolLabels: Record<ToolType, string> = {
   eyedropper: '取色',
   fill: '填充',
   crop: '裁剪',
+  text: '文字',
 }
 
 const getBaseName = (filePath: string) => filePath.split(/[/\\]/).pop() ?? filePath
@@ -57,6 +58,7 @@ export default function App() {
     activeTool,
     color,
     brushSize,
+    textSize,
     recentColors,
     statusMessage,
     currentProjectPath,
@@ -66,6 +68,7 @@ export default function App() {
     setTool,
     setColor,
     setBrushSize,
+    setTextSize,
     zoomIn,
     zoomOut,
     resetView,
@@ -76,6 +79,7 @@ export default function App() {
     reorderLayers,
     mergeCurrentLayerDown,
     setCurrentLayerTransform,
+    updateTextLayer,
     recordHistory,
     undo,
     redo,
@@ -95,6 +99,7 @@ export default function App() {
   )
   const orderedLayers = useMemo(() => [...(currentTask?.layers ?? [])].reverse(), [currentTask?.layers])
   const currentLayer = currentTask?.layers.find((layer) => layer.id === currentTask.currentLayerId) ?? null
+  const currentTextLayer = currentLayer?.type === 'text' ? currentLayer : null
   const canMergeCurrentLayerDown = useMemo(() => {
     if (!currentTask || !currentLayer) {
       return false
@@ -126,6 +131,22 @@ export default function App() {
     reorderLayers(nextDisplayOrder.reverse().map((layer) => layer.id))
     setDraggedLayerId(null)
     setDragOverLayerId(null)
+  }
+
+  const handleColorChange = (value: string) => {
+    setColor(value)
+    if (activeTool === 'text' && currentTextLayer?.textData) {
+      recordHistory()
+      updateTextLayer(currentTextLayer.id, { color: value })
+    }
+  }
+
+  const handleTextColorChange = (value: string) => {
+    setColor(value)
+    if (currentTextLayer?.textData) {
+      recordHistory()
+      updateTextLayer(currentTextLayer.id, { color: value })
+    }
   }
 
   useEffect(() => {
@@ -399,7 +420,7 @@ export default function App() {
             <h2>颜色与画笔</h2>
             <label className="field">
               <span>前景色</span>
-              <input onChange={(event) => setColor(event.target.value)} type="color" value={color} />
+              <input onChange={(event) => handleColorChange(event.target.value)} type="color" value={color} />
             </label>
             <label className="field">
               <span>画笔大小 {brushSize}px</span>
@@ -416,12 +437,58 @@ export default function App() {
                 <button
                   aria-label={`Set color ${recent}`}
                   key={recent}
-                  onClick={() => setColor(recent, false)}
+                  onClick={() => handleColorChange(recent)}
                   style={{ backgroundColor: recent }}
                   title={recent}
                 />
               ))}
             </div>
+          </section>
+
+          <section className="panel">
+            <h2>文字</h2>
+            <label className="field">
+              <span>字体颜色</span>
+              <input
+                onChange={(event) => handleTextColorChange(event.target.value)}
+                type="color"
+                value={currentTextLayer?.textData?.color ?? color}
+              />
+            </label>
+            <label className="field">
+              <span>默认字号 {currentTextLayer?.textData ? currentTextLayer.textData.fontSize : textSize}px</span>
+              <input
+                max={256}
+                min={8}
+                onPointerDown={() => {
+                  if (currentTextLayer?.textData) {
+                    recordHistory()
+                  }
+                }}
+                onChange={(event) => {
+                  const nextSize = Number(event.target.value)
+                  setTextSize(nextSize)
+                  if (currentTextLayer?.textData) {
+                    updateTextLayer(currentTextLayer.id, { fontSize: nextSize })
+                  }
+                }}
+                step={1}
+                type="range"
+                value={currentTextLayer?.textData ? currentTextLayer.textData.fontSize : textSize}
+              />
+            </label>
+            <div className="recent-colors">
+              {recentColors.map((recent) => (
+                <button
+                  aria-label={`Set text color ${recent}`}
+                  key={`text-${recent}`}
+                  onClick={() => handleTextColorChange(recent)}
+                  style={{ backgroundColor: recent }}
+                  title={recent}
+                />
+              ))}
+            </div>
+            <p className="hint">切到文字工具后点击画布可新建文字图层，输入框顶部可直接拖动位置。</p>
           </section>
 
           <section className="panel">
@@ -476,6 +543,7 @@ export default function App() {
           <section className="panel">
             <h2>当前图层</h2>
             <p className="hint">{currentLayer ? currentLayer.name : '未选中图层'}</p>
+            <p className="hint">图层类型: {currentLayer?.type === 'text' ? '文字图层' : '普通图层'}</p>
             <p className="hint">当前工具: {toolLabels[activeTool]}</p>
             <p className="hint">快捷键: `[` `]` 调整画笔，`Ctrl+S` 保存。</p>
             {currentLayer ? (
@@ -547,14 +615,25 @@ export default function App() {
                   />
                 </label>
                 <label className="field compact">
-                  <span>缩放 {currentLayer.scale.toFixed(2)}x</span>
+                  <span>横向缩放 {currentLayer.scaleX.toFixed(2)}x</span>
                   <input
-                    max={4}
+                    max={8}
                     min={0.1}
-                    onChange={(event) => setCurrentLayerTransform({ scale: Number(event.target.value) })}
+                    onChange={(event) => setCurrentLayerTransform({ scaleX: Number(event.target.value) })}
                     step={0.05}
                     type="range"
-                    value={currentLayer.scale}
+                    value={currentLayer.scaleX}
+                  />
+                </label>
+                <label className="field compact">
+                  <span>纵向缩放 {currentLayer.scaleY.toFixed(2)}x</span>
+                  <input
+                    max={8}
+                    min={0.1}
+                    onChange={(event) => setCurrentLayerTransform({ scaleY: Number(event.target.value) })}
+                    step={0.05}
+                    type="range"
+                    value={currentLayer.scaleY}
                   />
                 </label>
                 <label className="field compact">
@@ -571,11 +650,25 @@ export default function App() {
                 <button
                   onClick={() => {
                     recordHistory()
-                    setCurrentLayerTransform({ offsetX: 0, offsetY: 0, scale: 1, rotation: 0 })
+                    setCurrentLayerTransform({ offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1, rotation: 0 })
                   }}
                 >
                   重置变换
                 </button>
+                {currentTextLayer?.textData ? (
+                  <label className="field compact">
+                    <span>文字字号 {currentTextLayer.textData.fontSize}px</span>
+                    <input
+                      max={256}
+                      min={8}
+                      onPointerDown={() => recordHistory()}
+                      onChange={(event) => updateTextLayer(currentTextLayer.id, { fontSize: Number(event.target.value) })}
+                      step={1}
+                      type="range"
+                      value={currentTextLayer.textData.fontSize}
+                    />
+                  </label>
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -660,7 +753,7 @@ export default function App() {
                     </button>
                     <div>
                       <strong>{layer.name}</strong>
-                      <span>{layer.width} x {layer.height}</span>
+                      <span>{layer.type === 'text' ? `文字 ${layer.width} x ${layer.height}` : `${layer.width} x ${layer.height}`}</span>
                     </div>
                   </div>
                   <div className="layer-meta">

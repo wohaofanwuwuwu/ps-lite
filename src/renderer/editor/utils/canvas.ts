@@ -1,10 +1,45 @@
-import type { CropRect, LayerModel, LayerSnapshot, Point } from '../types'
+import type { CropRect, LayerModel, LayerSnapshot, Point, TextLayerData } from '../types'
 
 export const createCanvas = (width: number, height: number) => {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
   return canvas
+}
+
+export const DEFAULT_TEXT_FONT_FAMILY = '"Segoe UI", sans-serif'
+export const TEXT_LAYER_PADDING_X = 12
+export const TEXT_LAYER_PADDING_Y = 10
+const TEXT_LINE_HEIGHT = 1.25
+
+const measureTextLayer = (textData: TextLayerData) => {
+  const canvas = createCanvas(1, 1)
+  const ctx = canvas.getContext('2d')
+  const lines = textData.content.split(/\r?\n/)
+  const font = `${textData.fontSize}px ${textData.fontFamily}`
+  if (!ctx) {
+    const lineHeight = Math.max(Math.ceil(textData.fontSize * TEXT_LINE_HEIGHT), textData.fontSize + 4)
+    return {
+      lines,
+      lineHeight,
+      width: Math.max(textData.fontSize * 2, 64),
+      height: Math.max(lineHeight + TEXT_LAYER_PADDING_Y * 2, 40),
+    }
+  }
+
+  ctx.font = font
+  const maxLineWidth = Math.max(
+    ...lines.map((line) => Math.ceil(ctx.measureText(line || ' ').width)),
+    textData.fontSize,
+  )
+  const lineHeight = Math.max(Math.ceil(textData.fontSize * TEXT_LINE_HEIGHT), textData.fontSize + 4)
+
+  return {
+    lines,
+    lineHeight,
+    width: Math.max(maxLineWidth + TEXT_LAYER_PADDING_X * 2, 64),
+    height: Math.max(lines.length * lineHeight + TEXT_LAYER_PADDING_Y * 2, 40),
+  }
 }
 
 export const cloneCanvas = (source: HTMLCanvasElement) => {
@@ -19,16 +54,70 @@ export const cloneCanvas = (source: HTMLCanvasElement) => {
 export const createLayer = (width: number, height: number, name: string, id: string): LayerModel => ({
   id,
   name,
+  type: 'bitmap',
   visible: true,
   opacity: 1,
   width,
   height,
   offsetX: 0,
   offsetY: 0,
-  scale: 1,
+  scaleX: 1,
+  scaleY: 1,
   rotation: 0,
+  textData: null,
   canvas: createCanvas(width, height),
 })
+
+export const renderTextLayer = (layer: LayerModel) => {
+  if (layer.type !== 'text' || !layer.textData) {
+    return layer
+  }
+
+  const { lines, lineHeight, width, height } = measureTextLayer(layer.textData)
+  const canvas = createCanvas(width, height)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return layer
+  }
+
+  ctx.clearRect(0, 0, width, height)
+  ctx.font = `${layer.textData.fontSize}px ${layer.textData.fontFamily}`
+  ctx.fillStyle = layer.textData.color
+  ctx.textBaseline = 'top'
+
+  lines.forEach((line, index) => {
+    ctx.fillText(line, TEXT_LAYER_PADDING_X, TEXT_LAYER_PADDING_Y + index * lineHeight)
+  })
+
+  layer.canvas = canvas
+  layer.width = width
+  layer.height = height
+  return layer
+}
+
+export const createTextLayer = (
+  name: string,
+  id: string,
+  textData: TextLayerData,
+  offsetX = 0,
+  offsetY = 0,
+): LayerModel =>
+  renderTextLayer({
+    id,
+    name,
+    type: 'text',
+    visible: true,
+    opacity: 1,
+    width: 1,
+    height: 1,
+    offsetX,
+    offsetY,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    textData: { ...textData },
+    canvas: createCanvas(1, 1),
+  })
 
 export const resizeLayerCanvas = (layer: LayerModel, width: number, height: number) => {
   if (layer.canvas.width === width && layer.canvas.height === height) {
@@ -49,14 +138,17 @@ export const snapshotLayer = (layer: LayerModel): LayerSnapshot => {
   return {
     id: layer.id,
     name: layer.name,
+    type: layer.type,
     visible: layer.visible,
     opacity: layer.opacity,
     width: layer.width,
     height: layer.height,
     offsetX: layer.offsetX,
     offsetY: layer.offsetY,
-    scale: layer.scale,
+    scaleX: layer.scaleX,
+    scaleY: layer.scaleY,
     rotation: layer.rotation,
+    textData: layer.textData ? { ...layer.textData } : null,
     imageData,
   }
 }
@@ -68,14 +160,17 @@ export const restoreLayer = (snapshot: LayerSnapshot): LayerModel => {
   return {
     id: snapshot.id,
     name: snapshot.name,
+    type: snapshot.type,
     visible: snapshot.visible,
     opacity: snapshot.opacity,
     width: snapshot.width,
     height: snapshot.height,
     offsetX: snapshot.offsetX,
     offsetY: snapshot.offsetY,
-    scale: snapshot.scale,
+    scaleX: snapshot.scaleX,
+    scaleY: snapshot.scaleY,
     rotation: snapshot.rotation,
+    textData: snapshot.textData ? { ...snapshot.textData } : null,
     canvas,
   }
 }
@@ -91,15 +186,17 @@ export interface Matrix2D {
 
 const degreesToRadians = (degrees: number) => (degrees * Math.PI) / 180
 
-export const getLayerMatrix = (layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>): Matrix2D => {
+export const getLayerMatrix = (
+  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scaleX' | 'scaleY' | 'rotation'>,
+): Matrix2D => {
   const radians = degreesToRadians(layer.rotation)
-  const cos = Math.cos(radians) * layer.scale
-  const sin = Math.sin(radians) * layer.scale
+  const cos = Math.cos(radians)
+  const sin = Math.sin(radians)
   return {
-    a: cos,
-    b: sin,
-    c: -sin,
-    d: cos,
+    a: cos * layer.scaleX,
+    b: sin * layer.scaleX,
+    c: -sin * layer.scaleY,
+    d: cos * layer.scaleY,
     e: layer.offsetX,
     f: layer.offsetY,
   }
@@ -130,7 +227,7 @@ export const multiplyMatrices = (left: Matrix2D, right: Matrix2D): Matrix2D => (
 })
 
 export const toLayerLocalPoint = (
-  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>,
+  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scaleX' | 'scaleY' | 'rotation'>,
   point: Point,
 ): Point => {
   const matrix = invertMatrix(getLayerMatrix(layer))
@@ -142,11 +239,14 @@ export const toLayerLocalPoint = (
 
 export const applyLayerTransform = (
   ctx: CanvasRenderingContext2D,
-  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scale' | 'rotation'>,
+  layer: Pick<LayerModel, 'offsetX' | 'offsetY' | 'scaleX' | 'scaleY' | 'rotation'>,
 ) => {
   const matrix = getLayerMatrix(layer)
   ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f)
 }
+
+export const getLayerScaleMagnitude = (layer: Pick<LayerModel, 'scaleX' | 'scaleY'>) =>
+  Math.max((Math.abs(layer.scaleX) + Math.abs(layer.scaleY)) / 2, 0.1)
 
 export const compositeLayers = (
   target: HTMLCanvasElement,

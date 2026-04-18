@@ -5,7 +5,7 @@ import type {
   ProjectLayerData,
   ProjectTaskData,
 } from '../types'
-import { createLayer } from './canvas'
+import { createLayer, createTextLayer } from './canvas'
 
 const loadImage = async (src: string) => {
   const image = new Image()
@@ -18,14 +18,17 @@ const loadImage = async (src: string) => {
 const layerToProjectData = (layer: LayerModel): ProjectLayerData => ({
   id: layer.id,
   name: layer.name,
+  type: layer.type,
   visible: layer.visible,
   opacity: layer.opacity,
   width: layer.width,
   height: layer.height,
   offsetX: layer.offsetX,
   offsetY: layer.offsetY,
-  scale: layer.scale,
+  scaleX: layer.scaleX,
+  scaleY: layer.scaleY,
   rotation: layer.rotation,
+  textData: layer.textData ? { ...layer.textData } : null,
   image: layer.canvas.toDataURL('image/png'),
 })
 
@@ -46,12 +49,23 @@ export const serializeProject = (tasks: EditorTask[], activeTaskId: string): Pro
 })
 
 const restoreLayerFromProject = async (data: ProjectLayerData) => {
+  if (data.type === 'text' && data.textData) {
+    const layer = createTextLayer(data.name, data.id, data.textData, data.offsetX, data.offsetY)
+    layer.visible = data.visible
+    layer.opacity = data.opacity
+    layer.scaleX = data.scaleX ?? data.scale ?? 1
+    layer.scaleY = data.scaleY ?? data.scale ?? 1
+    layer.rotation = data.rotation
+    return layer
+  }
+
   const layer = createLayer(data.width, data.height, data.name, data.id)
   layer.visible = data.visible
   layer.opacity = data.opacity
   layer.offsetX = data.offsetX
   layer.offsetY = data.offsetY
-  layer.scale = data.scale
+  layer.scaleX = data.scaleX ?? data.scale ?? 1
+  layer.scaleY = data.scaleY ?? data.scale ?? 1
   layer.rotation = data.rotation
 
   const image = await loadImage(data.image)

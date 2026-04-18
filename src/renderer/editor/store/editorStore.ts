@@ -11,10 +11,13 @@ import type {
 import { clamp } from '../utils/color'
 import {
   createLayer,
+  createTextLayer,
   cropLayerCanvas,
+  DEFAULT_TEXT_FONT_FAMILY,
   getLayerMatrix,
   invertMatrix,
   multiplyMatrices,
+  renderTextLayer,
   resizeLayerCanvas,
   restoreLayer,
   snapshotLayer,
@@ -26,6 +29,7 @@ interface EditorState {
   activeTool: ToolType
   color: string
   brushSize: number
+  textSize: number
   recentColors: string[]
   statusMessage: string
   clipboard: ClipboardLayer | null
@@ -36,6 +40,7 @@ interface EditorState {
   setTool: (tool: ToolType) => void
   setColor: (color: string, addToRecent?: boolean) => void
   setBrushSize: (size: number) => void
+  setTextSize: (size: number) => void
   setZoom: (zoom: number) => void
   zoomIn: () => void
   zoomOut: () => void
@@ -49,12 +54,20 @@ interface EditorState {
   selectLayer: (layerId: string) => void
   addLayer: () => void
   addImageLayer: (name: string, source: CanvasImageSource, width: number, height: number) => void
+  addTextLayerAt: (point: Point, color?: string, fontSize?: number) => string | null
   deleteCurrentLayer: () => void
   toggleLayerVisibility: (layerId: string) => void
   reorderLayers: (layerIds: string[]) => void
   mergeCurrentLayerDown: () => void
   mutateCurrentLayer: (mutate: (layer: LayerModel) => void) => void
-  setCurrentLayerTransform: (transform: { offsetX?: number; offsetY?: number; scale?: number; rotation?: number }) => void
+  updateTextLayer: (layerId: string, updates: { content?: string; fontSize?: number; color?: string }) => void
+  setCurrentLayerTransform: (transform: {
+    offsetX?: number
+    offsetY?: number
+    scaleX?: number
+    scaleY?: number
+    rotation?: number
+  }) => void
   recordHistory: () => void
   undo: () => void
   redo: () => void
@@ -151,12 +164,16 @@ const addLayerToTask = (
 ) => {
   const nextWidth = Math.max(task.canvasWidth, width)
   const nextHeight = Math.max(task.canvasHeight, height)
-  const resizedLayers = task.layers.map((layer) => ({
-    ...layer,
-    width: nextWidth,
-    height: nextHeight,
-    canvas: resizeLayerCanvas(layer, nextWidth, nextHeight),
-  }))
+  const resizedLayers = task.layers.map((layer) =>
+    layer.type === 'text'
+      ? layer
+      : {
+          ...layer,
+          width: nextWidth,
+          height: nextHeight,
+          canvas: resizeLayerCanvas(layer, nextWidth, nextHeight),
+        },
+  )
   const id = nextLayerId()
   const layer = createLayer(nextWidth, nextHeight, name, id)
   const ctx = layer.canvas.getContext('2d')
@@ -179,6 +196,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   activeTool: 'brush',
   color: '#111111',
   brushSize: 24,
+  textSize: 48,
   recentColors: ['#111111', '#ef4444', '#22c55e', '#3b82f6', '#f59e0b'],
   statusMessage: 'Ready',
   clipboard: null,
@@ -250,6 +268,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       recentColors: addToRecent ? addRecentColor(state.recentColors, color) : state.recentColors,
     })),
   setBrushSize: (size) => set({ brushSize: clamp(size, 1, 128) }),
+  setTextSize: (size) => set({ textSize: clamp(size, 8, 256) }),
   setZoom: (zoom) =>
     set((state) => updateActiveTask(state, (task) => ({ ...task, zoom: clamp(zoom, 0.25, 4) }))),
   zoomIn: () =>
@@ -288,6 +307,32 @@ export const useEditorStore = create<EditorState>((set) => ({
     ),
   addImageLayer: (name, source, width, height) =>
     set((state) => updateActiveTask(state, (task) => addLayerToTask(task, name, source, width, height))),
+  addTextLayerAt: (point, color, fontSize) => {
+    const id = nextLayerId()
+    set((state) =>
+      updateActiveTask(state, (task) => {
+        const layer = createTextLayer(
+          `文本 ${layerCounter}`,
+          id,
+          {
+            content: '文字',
+            fontSize: clamp(fontSize ?? state.textSize, 8, 256),
+            color: color ?? state.color,
+            fontFamily: DEFAULT_TEXT_FONT_FAMILY,
+          },
+          Math.round(point.x),
+          Math.round(point.y),
+        )
+        return {
+          ...task,
+          layers: [...task.layers, layer],
+          currentLayerId: id,
+          renderVersion: task.renderVersion + 1,
+        }
+      }),
+    )
+    return id
+  },
   deleteCurrentLayer: () =>
     set((state) =>
       updateActiveTask(state, (task) => {
@@ -342,7 +387,11 @@ export const useEditorStore = create<EditorState>((set) => ({
         }
 
         const sourceLayer = task.layers[sourceIndex]
-        const targetLayer = task.layers[sourceIndex - 1]
+        const targetLayer = {
+          ...task.layers[sourceIndex - 1],
+          type: 'bitmap' as const,
+          textData: null,
+        }
         const targetContext = targetLayer.canvas.getContext('2d')
         if (!targetContext) {
           return task
@@ -365,7 +414,9 @@ export const useEditorStore = create<EditorState>((set) => ({
         targetContext.drawImage(sourceLayer.canvas, 0, 0)
         targetContext.restore()
 
-        const nextLayers = task.layers.filter((layer) => layer.id !== sourceLayer.id)
+        const nextLayers = task.layers
+          .map((layer) => (layer.id === targetLayer.id ? targetLayer : layer))
+          .filter((layer) => layer.id !== sourceLayer.id)
         return {
           ...task,
           layers: nextLayers,
@@ -382,8 +433,37 @@ export const useEditorStore = create<EditorState>((set) => ({
           if (layer.id !== task.currentLayerId) {
             return layer
           }
-          mutate(layer)
-          return { ...layer }
+          const nextLayer =
+            layer.type === 'text'
+              ? {
+                  ...layer,
+                  type: 'bitmap' as const,
+                  textData: null,
+                }
+              : { ...layer }
+          mutate(nextLayer)
+          return nextLayer
+        }),
+        renderVersion: task.renderVersion + 1,
+      })),
+    ),
+  updateTextLayer: (layerId, updates) =>
+    set((state) =>
+      updateActiveTask(state, (task) => ({
+        ...task,
+        layers: task.layers.map((layer) => {
+          if (layer.id !== layerId || layer.type !== 'text' || !layer.textData) {
+            return layer
+          }
+          const nextLayer = {
+            ...layer,
+            textData: {
+              ...layer.textData,
+              ...updates,
+              fontSize: clamp(updates.fontSize ?? layer.textData.fontSize, 8, 256),
+            },
+          }
+          return renderTextLayer(nextLayer)
         }),
         renderVersion: task.renderVersion + 1,
       })),
@@ -400,7 +480,8 @@ export const useEditorStore = create<EditorState>((set) => ({
             ...layer,
             offsetX: transform.offsetX ?? layer.offsetX,
             offsetY: transform.offsetY ?? layer.offsetY,
-            scale: clamp(transform.scale ?? layer.scale, 0.1, 8),
+            scaleX: clamp(transform.scaleX ?? layer.scaleX, 0.1, 8),
+            scaleY: clamp(transform.scaleY ?? layer.scaleY, 0.1, 8),
             rotation: ((transform.rotation ?? layer.rotation) % 360 + 360) % 360,
           }
         }),
@@ -454,6 +535,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         }
         const nextLayers = task.layers.map((layer) => ({
           ...layer,
+          type: 'bitmap' as const,
+          textData: null,
           width: rect.width,
           height: rect.height,
           canvas: cropLayerCanvas(layer, rect),
