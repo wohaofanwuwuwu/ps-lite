@@ -86,14 +86,46 @@ button:disabled {
 }
 
 .task-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: stretch;
   min-width: 150px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.9);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.task-item-main {
+  min-width: 0;
+  width: 100%;
   padding: 10px 14px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
-  border-radius: 12px;
+  border: none;
+  border-radius: 0;
   white-space: nowrap;
+  background: transparent;
+}
+
+.task-delete {
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  border: none;
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 0;
+  background: rgba(15, 23, 42, 0.85);
+  color: #94a3b8;
+  font-size: 18px;
+}
+
+.task-delete:hover:not(:disabled) {
+  color: #fda4af;
+  background: rgba(127, 29, 29, 0.32);
 }
 
 .task-item strong {
@@ -108,6 +140,10 @@ button:disabled {
 .task-item.is-active {
   background: #0b2940;
   border-color: #38bdf8;
+}
+
+.task-item.is-active .task-delete {
+  border-left-color: rgba(56, 189, 248, 0.3);
 }
 
 .task-add {
@@ -410,6 +446,12 @@ button:disabled {
   color: #94a3b8;
   letter-spacing: 1px;
   font-weight: 700;
+  cursor: grab;
+  user-select: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .transform-panel {

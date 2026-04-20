@@ -93,7 +93,9 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
   const currentLayer = currentTask?.layers.find((layer) => layer.id === currentTask.currentLayerId) ?? null
   const [activeTextLayerId, setActiveTextLayerId] = useState<string | null>(null)
   const activeTextLayer =
-    currentTask?.layers.find((layer) => layer.id === activeTextLayerId && layer.type === 'text') ?? null
+    currentTask?.layers.find(
+      (layer) => layer.id === activeTextLayerId && layer.type === 'text' && layer.visible,
+    ) ?? null
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
@@ -111,6 +113,20 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
   const textEditHistoryRef = useRef<string | null>(null)
   const selectTextOnFocusRef = useRef(false)
   const spacePressedRef = useRef(false)
+
+  useEffect(() => {
+    drawingRef.current = false
+    panningRef.current = false
+    lastPointRef.current = null
+    cropStartRef.current = null
+    moveStartRef.current = null
+    resizeStartRef.current = null
+    panStartRef.current = null
+    textMoveStartRef.current = null
+    textEditHistoryRef.current = null
+    selectTextOnFocusRef.current = false
+    setActiveTextLayerId(null)
+  }, [activeTaskId])
 
   useEffect(() => {
     if (!currentTask) {

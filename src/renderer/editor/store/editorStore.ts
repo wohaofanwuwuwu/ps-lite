@@ -35,6 +35,7 @@ interface EditorState {
   clipboard: ClipboardLayer | null
   currentProjectPath: string | null
   setActiveTask: (taskId: string) => void
+  deleteTask: (taskId: string) => void
   createTask: (name?: string, width?: number, height?: number) => void
   createTaskFromImage: (name: string, source: CanvasImageSource, width: number, height: number) => void
   setTool: (tool: ToolType) => void
@@ -202,6 +203,29 @@ export const useEditorStore = create<EditorState>((set) => ({
   clipboard: null,
   currentProjectPath: null,
   setActiveTask: (taskId) => set({ activeTaskId: taskId }),
+  deleteTask: (taskId) =>
+    set((state) => {
+      if (state.tasks.length <= 1) {
+        return {
+          statusMessage: '至少保留一个任务',
+        }
+      }
+      const taskIndex = state.tasks.findIndex((task) => task.id === taskId)
+      if (taskIndex === -1) {
+        return state
+      }
+      const deletedTask = state.tasks[taskIndex]
+      const nextTasks = state.tasks.filter((task) => task.id !== taskId)
+      const nextActiveTaskId =
+        state.activeTaskId === taskId
+          ? (nextTasks[Math.min(taskIndex, nextTasks.length - 1)]?.id ?? nextTasks[0]!.id)
+          : state.activeTaskId
+      return {
+        tasks: nextTasks,
+        activeTaskId: nextActiveTaskId,
+        statusMessage: `已删除 ${deletedTask.name}`,
+      }
+    }),
   createTask: (name, width = 1024, height = 768) =>
     set((state) => {
       const id = nextTaskId()
@@ -497,8 +521,14 @@ export const useEditorStore = create<EditorState>((set) => ({
       })),
     ),
   undo: () =>
-    set((state) =>
-      updateActiveTask(state, (task) => {
+    set((state) => {
+      const task = state.tasks.find((item) => item.id === state.activeTaskId)
+      if (!task?.history.length) {
+        return {
+          statusMessage: '没有可撤销的操作',
+        }
+      }
+      return updateActiveTask(state, (task) => {
         const previous = task.history[task.history.length - 1]
         if (!previous) {
           return task
@@ -509,11 +539,17 @@ export const useEditorStore = create<EditorState>((set) => ({
           history: task.history.slice(0, -1),
           future: [getTaskSnapshot(task), ...task.future].slice(0, 30),
         }
-      }),
-    ),
+      })
+    }),
   redo: () =>
-    set((state) =>
-      updateActiveTask(state, (task) => {
+    set((state) => {
+      const task = state.tasks.find((item) => item.id === state.activeTaskId)
+      if (!task?.future.length) {
+        return {
+          statusMessage: '没有可重做的操作',
+        }
+      }
+      return updateActiveTask(state, (task) => {
         const next = task.future[0]
         if (!next) {
           return task
@@ -524,8 +560,8 @@ export const useEditorStore = create<EditorState>((set) => ({
           history: [...task.history, getTaskSnapshot(task)].slice(-30),
           future: task.future.slice(1),
         }
-      }),
-    ),
+      })
+    }),
   applyCrop: () =>
     set((state) =>
       updateActiveTask(state, (task) => {

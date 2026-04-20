@@ -47,6 +47,7 @@ const isTypingTarget = (target: EventTarget | null) => {
 
 export default function App() {
   const compositeCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const inputHistorySessionRef = useRef<string | null>(null)
   const [draggedLayerId, setDraggedLayerId] = useState<string | null>(null)
   const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
@@ -63,6 +64,7 @@ export default function App() {
     statusMessage,
     currentProjectPath,
     setActiveTask,
+    deleteTask,
     createTask,
     createTaskFromImage,
     setTool,
@@ -106,6 +108,24 @@ export default function App() {
     }
     return currentTask.layers.findIndex((layer) => layer.id === currentLayer.id) > 0
   }, [currentLayer, currentTask])
+
+  const beginInputHistorySession = (sessionId: string) => {
+    if (inputHistorySessionRef.current === sessionId) {
+      return
+    }
+    recordHistory()
+    inputHistorySessionRef.current = sessionId
+  }
+
+  const endInputHistorySession = (sessionId: string) => {
+    if (inputHistorySessionRef.current === sessionId) {
+      inputHistorySessionRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    inputHistorySessionRef.current = null
+  }, [activeTaskId, currentTask?.currentLayerId])
 
   const handleLayerDrop = (targetLayerId: string) => {
     if (!draggedLayerId || draggedLayerId === targetLayerId) {
@@ -161,11 +181,13 @@ export default function App() {
 
       if (command && event.key.toLowerCase() === 'z' && !event.shiftKey) {
         event.preventDefault()
+        inputHistorySessionRef.current = null
         undo()
       }
 
       if ((command && event.shiftKey && event.key.toLowerCase() === 'z') || (command && event.key.toLowerCase() === 'y')) {
         event.preventDefault()
+        inputHistorySessionRef.current = null
         redo()
       }
 
@@ -376,22 +398,53 @@ export default function App() {
         <div className="action-row">
           <button onClick={() => void handleExport()}>导出 PNG</button>
           <button onClick={() => void handleSave()}>保存 Ctrl+S</button>
-          <button onClick={undo}>撤销</button>
-          <button onClick={redo}>重做</button>
+          <button
+            onClick={() => {
+              inputHistorySessionRef.current = null
+              undo()
+            }}
+          >
+            撤销
+          </button>
+          <button
+            onClick={() => {
+              inputHistorySessionRef.current = null
+              redo()
+            }}
+          >
+            重做
+          </button>
         </div>
       </header>
 
       <div className="taskbar">
         <div className="task-list">
           {tasks.map((task) => (
-            <button
+            <div
               className={`task-item ${task.id === activeTaskId ? 'is-active' : ''}`}
               key={task.id}
-              onClick={() => setActiveTask(task.id)}
             >
-              <strong>{task.name}</strong>
-              <span>{task.canvasWidth} x {task.canvasHeight}</span>
-            </button>
+              <button className="task-item-main" onClick={() => setActiveTask(task.id)}>
+                <strong>{task.name}</strong>
+                <span>{task.canvasWidth} x {task.canvasHeight}</span>
+              </button>
+              <button
+                className="task-delete"
+                disabled={tasks.length === 1}
+                onClick={() => {
+                  if (tasks.length === 1) {
+                    return
+                  }
+                  if (!window.confirm(`删除任务“${task.name}”？`)) {
+                    return
+                  }
+                  deleteTask(task.id)
+                }}
+                title={tasks.length === 1 ? '至少保留一个任务' : `删除 ${task.name}`}
+              >
+                ×
+              </button>
+            </div>
           ))}
         </div>
         <button className="task-add" onClick={() => createTask()}>
@@ -601,6 +654,8 @@ export default function App() {
                 <label className="field compact">
                   <span>横向位置</span>
                   <input
+                    onBlur={() => endInputHistorySession('transform-offsetX')}
+                    onFocus={() => beginInputHistorySession('transform-offsetX')}
                     onChange={(event) => setCurrentLayerTransform({ offsetX: Number(event.target.value) })}
                     type="number"
                     value={Math.round(currentLayer.offsetX)}
@@ -609,6 +664,8 @@ export default function App() {
                 <label className="field compact">
                   <span>纵向位置</span>
                   <input
+                    onBlur={() => endInputHistorySession('transform-offsetY')}
+                    onFocus={() => beginInputHistorySession('transform-offsetY')}
                     onChange={(event) => setCurrentLayerTransform({ offsetY: Number(event.target.value) })}
                     type="number"
                     value={Math.round(currentLayer.offsetY)}
@@ -619,6 +676,10 @@ export default function App() {
                   <input
                     max={8}
                     min={0.1}
+                    onBlur={() => endInputHistorySession('transform-scaleX')}
+                    onFocus={() => beginInputHistorySession('transform-scaleX')}
+                    onPointerDown={() => beginInputHistorySession('transform-scaleX')}
+                    onPointerUp={() => endInputHistorySession('transform-scaleX')}
                     onChange={(event) => setCurrentLayerTransform({ scaleX: Number(event.target.value) })}
                     step={0.05}
                     type="range"
@@ -630,6 +691,10 @@ export default function App() {
                   <input
                     max={8}
                     min={0.1}
+                    onBlur={() => endInputHistorySession('transform-scaleY')}
+                    onFocus={() => beginInputHistorySession('transform-scaleY')}
+                    onPointerDown={() => beginInputHistorySession('transform-scaleY')}
+                    onPointerUp={() => endInputHistorySession('transform-scaleY')}
                     onChange={(event) => setCurrentLayerTransform({ scaleY: Number(event.target.value) })}
                     step={0.05}
                     type="range"
@@ -641,6 +706,10 @@ export default function App() {
                   <input
                     max={360}
                     min={0}
+                    onBlur={() => endInputHistorySession('transform-rotation')}
+                    onFocus={() => beginInputHistorySession('transform-rotation')}
+                    onPointerDown={() => beginInputHistorySession('transform-rotation')}
+                    onPointerUp={() => endInputHistorySession('transform-rotation')}
                     onChange={(event) => setCurrentLayerTransform({ rotation: Number(event.target.value) })}
                     step={1}
                     type="range"
@@ -716,22 +785,13 @@ export default function App() {
                   className={`layer-item ${layer.id === currentTask?.currentLayerId ? 'selected' : ''} ${
                     dragOverLayerId === layer.id ? 'drag-over' : ''
                   }`}
-                  draggable
                   key={layer.id}
                   onClick={() => selectLayer(layer.id)}
-                  onDragEnd={() => {
-                    setDraggedLayerId(null)
-                    setDragOverLayerId(null)
-                  }}
                   onDragOver={(event) => {
                     event.preventDefault()
                     if (draggedLayerId !== layer.id) {
                       setDragOverLayerId(layer.id)
                     }
-                  }}
-                  onDragStart={() => {
-                    setDraggedLayerId(layer.id)
-                    setDragOverLayerId(layer.id)
                   }}
                   onDrop={(event) => {
                     event.preventDefault()
@@ -742,6 +802,7 @@ export default function App() {
                     <button
                       aria-label={layer.visible ? `隐藏 ${layer.name}` : `显示 ${layer.name}`}
                       className={`visibility ${layer.visible ? 'is-visible' : 'is-hidden'}`}
+                      draggable={false}
                       onClick={(event) => {
                         event.stopPropagation()
                         recordHistory()
@@ -758,7 +819,23 @@ export default function App() {
                   </div>
                   <div className="layer-meta">
                     <span className="hint">{layer.id === currentTask?.currentLayerId ? '当前选中' : '点击选中'}</span>
-                    <span className="drag-handle" aria-hidden="true">::</span>
+                    <span
+                      aria-hidden="true"
+                      className="drag-handle"
+                      draggable
+                      onClick={(event) => event.stopPropagation()}
+                      onDragEnd={() => {
+                        setDraggedLayerId(null)
+                        setDragOverLayerId(null)
+                      }}
+                      onDragStart={(event) => {
+                        event.stopPropagation()
+                        setDraggedLayerId(layer.id)
+                        setDragOverLayerId(layer.id)
+                      }}
+                    >
+                      ::
+                    </span>
                   </div>
                 </div>
               ))}
