@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorCanvas } from './editor/components/EditorCanvas'
 import { useEditorStore } from './editor/store/editorStore'
 import type { ToolType } from './editor/types'
+import { hexToRgba } from './editor/utils/color'
+import { replaceColorInCanvas } from './editor/utils/canvas'
 import { deserializeProject, serializeProject } from './editor/utils/project'
 
 const toolLabels: Record<ToolType, string> = {
@@ -52,6 +54,10 @@ export default function App() {
   const [dragOverLayerId, setDragOverLayerId] = useState<string | null>(null)
   const [isFileDragActive, setIsFileDragActive] = useState(false)
   const dragDepthRef = useRef(0)
+  const [replaceFromColor, setReplaceFromColor] = useState('#000000')
+  const [replaceToColor, setReplaceToColor] = useState('#ffffff')
+  const [replaceToTransparent, setReplaceToTransparent] = useState(false)
+  const [replaceTolerance, setReplaceTolerance] = useState(0)
 
   const {
     tasks,
@@ -95,6 +101,7 @@ export default function App() {
     pasteClipboard,
     loadProjectState,
     setProjectPath,
+    mutateCurrentLayer,
   } = useEditorStore()
 
   const currentTask = useMemo(
@@ -169,6 +176,23 @@ export default function App() {
       recordHistory()
       updateTextLayer(currentTextLayer.id, { color: value })
     }
+  }
+
+  const handleReplaceLayerColor = () => {
+    if (!currentLayer) {
+      return
+    }
+    const from = hexToRgba(replaceFromColor)
+    const to = hexToRgba(replaceToColor)
+    recordHistory()
+    mutateCurrentLayer((layer) => {
+      const count = replaceColorInCanvas(layer.canvas, [from[0], from[1], from[2]], {
+        tolerance: replaceTolerance,
+        toTransparent: replaceToTransparent,
+        toRgb: replaceToTransparent ? undefined : [to[0], to[1], to[2]],
+      })
+      setStatusMessage(count > 0 ? `已替换 ${count} 个像素` : '没有匹配的像素')
+    })
   }
 
   useEffect(() => {
@@ -498,6 +522,61 @@ export default function App() {
                 />
               ))}
             </div>
+          </section>
+
+          <section className="panel">
+            <h2>颜色替换</h2>
+            <label className="field compact">
+              <span>原色</span>
+              <div className="action-row" style={{ flexWrap: 'wrap' }}>
+                <input
+                  onChange={(event) => setReplaceFromColor(event.target.value)}
+                  style={{ flex: '1 1 120px', minWidth: 0 }}
+                  type="color"
+                  value={replaceFromColor}
+                />
+                <button onClick={() => setReplaceFromColor(color)} title="使用当前前景色" type="button">
+                  用前景色
+                </button>
+              </div>
+            </label>
+            <div className="field compact">
+              <span>替换为</span>
+              <div className="hint" style={{ marginBottom: 6 }}>
+                勾选「透明」时用完全透明像素替换原色，不再使用下方目标色。
+              </div>
+              <label style={{ alignItems: 'center', display: 'flex', flexDirection: 'row', gap: 8 }}>
+                <input
+                  checked={replaceToTransparent}
+                  onChange={(event) => setReplaceToTransparent(event.target.checked)}
+                  type="checkbox"
+                />
+                透明
+              </label>
+              <input
+                disabled={replaceToTransparent}
+                onChange={(event) => setReplaceToColor(event.target.value)}
+                type="color"
+                value={replaceToColor}
+              />
+            </div>
+            <label className="field compact">
+              <span>容差（0 为完全一致） {replaceTolerance}</span>
+              <input
+                max={64}
+                min={0}
+                onChange={(event) => setReplaceTolerance(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={replaceTolerance}
+              />
+            </label>
+            <div className="action-row">
+              <button disabled={!currentLayer} onClick={handleReplaceLayerColor} type="button">
+                应用到当前图层
+              </button>
+            </div>
+            <p className="hint">按 RGB 匹配当前图层像素；文字图层会先栅格化为位图。</p>
           </section>
 
           <section className="panel">

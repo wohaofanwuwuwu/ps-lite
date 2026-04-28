@@ -357,6 +357,78 @@ export const fillCanvas = (canvas: HTMLCanvasElement, point: Point, color: [numb
   ctx.putImageData(imageData, 0, 0)
 }
 
+const clampTolerance = (value: number) => Math.min(255, Math.max(0, Math.round(value)))
+
+const matchesRgb = (
+  r: number,
+  g: number,
+  b: number,
+  from: [number, number, number],
+  tolerance: number,
+) => {
+  if (tolerance <= 0) {
+    return r === from[0] && g === from[1] && b === from[2]
+  }
+  return (
+    Math.abs(r - from[0]) <= tolerance &&
+    Math.abs(g - from[1]) <= tolerance &&
+    Math.abs(b - from[2]) <= tolerance
+  )
+}
+
+/** Replaces RGB-matching pixels on the canvas. Transparency option sets RGBA to 0. Returns count of pixels changed. */
+export const replaceColorInCanvas = (
+  canvas: HTMLCanvasElement,
+  from: [number, number, number],
+  options: {
+    tolerance: number
+    toTransparent: boolean
+    toRgb?: [number, number, number]
+  },
+): number => {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) {
+    return 0
+  }
+  const { width, height } = canvas
+  const imageData = ctx.getImageData(0, 0, width, height)
+  const data = imageData.data
+  const tol = clampTolerance(options.tolerance)
+  let count = 0
+  let tr = 0
+  let tg = 0
+  let tb = 0
+  if (!options.toTransparent && options.toRgb) {
+    tr = options.toRgb[0]
+    tg = options.toRgb[1]
+    tb = options.toRgb[2]
+  }
+  for (let index = 0; index < data.length; index += 4) {
+    const r = data[index]!
+    const g = data[index + 1]!
+    const b = data[index + 2]!
+    if (!matchesRgb(r, g, b, from, tol)) {
+      continue
+    }
+    count += 1
+    if (options.toTransparent) {
+      data[index] = 0
+      data[index + 1] = 0
+      data[index + 2] = 0
+      data[index + 3] = 0
+    } else {
+      data[index] = tr
+      data[index + 1] = tg
+      data[index + 2] = tb
+      data[index + 3] = 255
+    }
+  }
+  if (count > 0) {
+    ctx.putImageData(imageData, 0, 0)
+  }
+  return count
+}
+
 export const cropLayerCanvas = (layer: LayerModel, rect: CropRect) => {
   const next = createCanvas(rect.width, rect.height)
   const ctx = next.getContext('2d')
