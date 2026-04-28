@@ -143,6 +143,8 @@ export const deserializeProject = async (project: ProjectFileData): Promise<{ ta
       panX: 0,
       panY: 0,
       pendingCrop: null,
+      cropMode: 'rect',
+      pendingPolygon: null,
       hoverPoint: null,
       renderVersion: 0,
       lastExportPath: task.lastExportPath,

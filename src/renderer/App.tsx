@@ -88,6 +88,8 @@ export default function App() {
     setStatusMessage,
     setExportPath,
     setPendingCrop,
+    setCropMode,
+    clearPolygon,
     applyCrop,
     copyCurrentLayer,
     pasteClipboard,
@@ -556,22 +558,65 @@ export default function App() {
 
           <section className="panel">
             <h2>裁剪</h2>
-            <div className="action-row">
-              <button
-                disabled={!currentTask?.pendingCrop}
-                onClick={() => {
-                  if (!currentTask?.pendingCrop) return
-                  recordHistory()
-                  applyCrop()
-                }}
+            <label className="field">
+              <span>裁剪模式</span>
+              <select
+                value={currentTask?.cropMode ?? 'rect'}
+                onChange={(event) => setCropMode(event.target.value as 'rect' | 'polygon')}
               >
-                应用裁剪
-              </button>
-              <button disabled={!currentTask?.pendingCrop} onClick={() => setPendingCrop(null)}>
-                取消
-              </button>
-            </div>
-            <p className="hint">切到裁剪工具后拖出区域，再点击应用或按 Enter。</p>
+                <option value="rect">四边形裁剪</option>
+                <option value="polygon">多边形裁剪</option>
+              </select>
+            </label>
+            {(() => {
+              const cropMode = currentTask?.cropMode ?? 'rect'
+              const canApply =
+                cropMode === 'rect'
+                  ? Boolean(currentTask?.pendingCrop)
+                  : Boolean(currentTask?.pendingPolygon?.closed)
+              const canCancel =
+                cropMode === 'rect'
+                  ? Boolean(currentTask?.pendingCrop)
+                  : Boolean(currentTask?.pendingPolygon)
+              const onCancel = () => {
+                if (cropMode === 'polygon') {
+                  clearPolygon()
+                } else {
+                  setPendingCrop(null)
+                }
+              }
+              return (
+                <>
+                  <div className="action-row">
+                    <button
+                      disabled={!canApply}
+                      onClick={() => {
+                        if (!canApply) return
+                        recordHistory()
+                        applyCrop()
+                      }}
+                    >
+                      应用裁剪
+                    </button>
+                    <button disabled={!canCancel} onClick={onCancel}>
+                      取消
+                    </button>
+                  </div>
+                  {cropMode === 'rect' ? (
+                    <p className="hint">切到裁剪工具后拖出区域，再点击应用或按 Enter。</p>
+                  ) : (
+                    <p className="hint">
+                      切到裁剪工具后依次点击生成多边形顶点，再次点击起点即可闭合，然后按 Enter 或"应用裁剪"。
+                      {currentTask?.pendingPolygon
+                        ? `已放置 ${currentTask.pendingPolygon.points.length} 个点${
+                            currentTask.pendingPolygon.closed ? ' (已闭合)' : ''
+                          }`
+                        : null}
+                    </p>
+                  )}
+                </>
+              )
+            })()}
           </section>
         </aside>
 

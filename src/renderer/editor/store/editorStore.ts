@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   ClipboardLayer,
+  CropMode,
   CropRect,
   EditorTask,
   HistorySnapshot,
@@ -12,9 +13,11 @@ import { clamp } from '../utils/color'
 import {
   createLayer,
   createTextLayer,
+  cropLayerByPolygon,
   cropLayerCanvas,
   DEFAULT_TEXT_FONT_FAMILY,
   getLayerMatrix,
+  getPolygonBoundingRect,
   invertMatrix,
   multiplyMatrices,
   renderTextLayer,
@@ -49,6 +52,10 @@ interface EditorState {
   setPan: (x: number, y: number) => void
   setHoverPoint: (point: Point | null) => void
   setPendingCrop: (rect: CropRect | null) => void
+  setCropMode: (mode: CropMode) => void
+  addPolygonPoint: (point: Point) => { closed: boolean }
+  closePolygon: () => void
+  clearPolygon: () => void
   setStatusMessage: (message: string) => void
   clearStatusMessage: () => void
   setExportPath: (path: string | null) => void
@@ -118,6 +125,8 @@ const createBlankTask = (name = `任务 ${taskCounter}`, width = 1024, height = 
     panX: 0,
     panY: 0,
     pendingCrop: null,
+    cropMode: 'rect',
+    pendingPolygon: null,
     hoverPoint: null,
     renderVersion: 0,
     lastExportPath: null,
@@ -140,6 +149,7 @@ const restoreTaskFromSnapshot = (task: EditorTask, snapshot: HistorySnapshot): E
   currentLayerId: snapshot.currentLayerId,
   layers: snapshot.layers.map(restoreLayer),
   pendingCrop: null,
+  pendingPolygon: null,
   hoverPoint: null,
   renderVersion: task.renderVersion + 1,
 })
@@ -242,6 +252,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         panX: 0,
         panY: 0,
         pendingCrop: null,
+        cropMode: 'rect',
+        pendingPolygon: null,
         hoverPoint: null,
         renderVersion: 0,
         lastExportPath: null,
@@ -273,6 +285,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         panX: 0,
         panY: 0,
         pendingCrop: null,
+        cropMode: 'rect',
+        pendingPolygon: null,
         hoverPoint: null,
         renderVersion: 0,
         lastExportPath: null,
@@ -310,6 +324,59 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((state) => updateActiveTask(state, (task) => ({ ...task, hoverPoint: point }))),
   setPendingCrop: (rect) =>
     set((state) => updateActiveTask(state, (task) => ({ ...task, pendingCrop: rect }))),
+  setCropMode: (mode) =>
+    set((state) =>
+      updateActiveTask(state, (task) => ({
+        ...task,
+        cropMode: mode,
+        pendingCrop: null,
+        pendingPolygon: null,
+      })),
+    ),
+  addPolygonPoint: (point) => {
+    let didClose = false
+    set((state) =>
+      updateActiveTask(state, (task) => {
+        if (task.pendingPolygon?.closed) {
+          return task
+        }
+        const existing = task.pendingPolygon?.points ?? []
+        if (existing.length >= 3) {
+          const first = existing[0]!
+          const dx = point.x - first.x
+          const dy = point.y - first.y
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          const zoom = task.zoom || 1
+          if (distance * zoom <= 10) {
+            didClose = true
+            return {
+              ...task,
+              pendingPolygon: { points: existing, closed: true },
+            }
+          }
+        }
+        return {
+          ...task,
+          pendingPolygon: {
+            points: [...existing, point],
+            closed: false,
+          },
+        }
+      }),
+    )
+    return { closed: didClose }
+  },
+  closePolygon: () =>
+    set((state) =>
+      updateActiveTask(state, (task) => {
+        if (!task.pendingPolygon || task.pendingPolygon.points.length < 3) {
+          return task
+        }
+        return { ...task, pendingPolygon: { ...task.pendingPolygon, closed: true } }
+      }),
+    ),
+  clearPolygon: () =>
+    set((state) => updateActiveTask(state, (task) => ({ ...task, pendingPolygon: null }))),
   setStatusMessage: (message) => set({ statusMessage: message }),
   clearStatusMessage: () => set({ statusMessage: 'Ready' }),
   setExportPath: (path) =>
@@ -565,6 +632,33 @@ export const useEditorStore = create<EditorState>((set) => ({
   applyCrop: () =>
     set((state) =>
       updateActiveTask(state, (task) => {
+        if (task.cropMode === 'polygon') {
+          const polygon = task.pendingPolygon
+          if (!polygon || !polygon.closed || polygon.points.length < 3) {
+            return task
+          }
+          const rect = getPolygonBoundingRect(polygon.points)
+          if (rect.width <= 0 || rect.height <= 0) {
+            return task
+          }
+          const nextLayers = task.layers.map((layer) => ({
+            ...layer,
+            type: 'bitmap' as const,
+            textData: null,
+            width: rect.width,
+            height: rect.height,
+            canvas: cropLayerByPolygon(layer, polygon.points, rect),
+          }))
+          return {
+            ...task,
+            canvasWidth: rect.width,
+            canvasHeight: rect.height,
+            layers: nextLayers,
+            pendingCrop: null,
+            pendingPolygon: null,
+            renderVersion: task.renderVersion + 1,
+          }
+        }
         const rect = task.pendingCrop
         if (!rect || rect.width <= 0 || rect.height <= 0) {
           return task
@@ -583,6 +677,7 @@ export const useEditorStore = create<EditorState>((set) => ({
           canvasHeight: rect.height,
           layers: nextLayers,
           pendingCrop: null,
+          pendingPolygon: null,
           renderVersion: task.renderVersion + 1,
         }
       }),

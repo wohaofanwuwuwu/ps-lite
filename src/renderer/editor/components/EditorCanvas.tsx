@@ -79,6 +79,8 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
     updateTextLayer,
     recordHistory,
     applyCrop,
+    addPolygonPoint,
+    clearPolygon,
   } = useEditorStore()
   const currentTask = tasks.find((task) => task.id === activeTaskId) ?? null
   const canvasWidth = currentTask?.canvasWidth ?? 1
@@ -88,6 +90,8 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
   const panX = currentTask?.panX ?? 0
   const panY = currentTask?.panY ?? 0
   const pendingCrop = currentTask?.pendingCrop ?? null
+  const cropMode = currentTask?.cropMode ?? 'rect'
+  const pendingPolygon = currentTask?.pendingPolygon ?? null
   const hoverPoint = currentTask?.hoverPoint ?? null
   const renderVersion = currentTask?.renderVersion ?? 0
   const currentLayer = currentTask?.layers.find((layer) => layer.id === currentTask.currentLayerId) ?? null
@@ -138,12 +142,18 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       }
       if (event.key === 'Escape') {
         setPendingCrop(null)
+        clearPolygon()
         setActiveTextLayerId(null)
         textEditHistoryRef.current = null
       }
-      if (event.key === 'Enter' && activeTool === 'crop' && pendingCrop) {
-        recordHistory()
-        applyCrop()
+      if (event.key === 'Enter' && activeTool === 'crop') {
+        if (cropMode === 'rect' && pendingCrop) {
+          recordHistory()
+          applyCrop()
+        } else if (cropMode === 'polygon' && pendingPolygon?.closed) {
+          recordHistory()
+          applyCrop()
+        }
       }
     }
 
@@ -159,7 +169,17 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [activeTool, applyCrop, currentTask, pendingCrop, recordHistory, setPendingCrop])
+  }, [
+    activeTool,
+    applyCrop,
+    clearPolygon,
+    cropMode,
+    currentTask,
+    pendingCrop,
+    pendingPolygon,
+    recordHistory,
+    setPendingCrop,
+  ])
 
   useEffect(() => {
     if (activeTool !== 'text') {
@@ -223,7 +243,7 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
 
     ctx.clearRect(0, 0, overlay.width, overlay.height)
 
-    if (pendingCrop) {
+    if (activeTool === 'crop' && cropMode === 'rect' && pendingCrop) {
       ctx.save()
       ctx.fillStyle = 'rgba(15, 23, 42, 0.35)'
       ctx.fillRect(0, 0, canvasWidth, canvasHeight)
@@ -232,6 +252,63 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       ctx.lineWidth = 2
       ctx.setLineDash([8, 6])
       ctx.strokeRect(pendingCrop.x, pendingCrop.y, pendingCrop.width, pendingCrop.height)
+      ctx.restore()
+    }
+
+    if (activeTool === 'crop' && cropMode === 'polygon' && pendingPolygon && pendingPolygon.points.length > 0) {
+      const points = pendingPolygon.points
+      const lineWidth = Math.max(2 / zoom, 1)
+      const handleRadius = Math.max(5 / zoom, 2)
+      const snapRadius = Math.max(10 / zoom, 4)
+
+      if (pendingPolygon.closed) {
+        ctx.save()
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.35)'
+        ctx.beginPath()
+        ctx.rect(0, 0, canvasWidth, canvasHeight)
+        points.forEach((point, index) => {
+          if (index === 0) {
+            ctx.moveTo(point.x, point.y)
+          } else {
+            ctx.lineTo(point.x, point.y)
+          }
+        })
+        ctx.closePath()
+        ctx.fill('evenodd')
+        ctx.restore()
+      }
+
+      ctx.save()
+      ctx.strokeStyle = '#38bdf8'
+      ctx.lineWidth = lineWidth
+      ctx.setLineDash([8 / zoom, 6 / zoom])
+      ctx.beginPath()
+      points.forEach((point, index) => {
+        if (index === 0) {
+          ctx.moveTo(point.x, point.y)
+        } else {
+          ctx.lineTo(point.x, point.y)
+        }
+      })
+      if (pendingPolygon.closed) {
+        ctx.closePath()
+      } else if (hoverPoint) {
+        ctx.lineTo(hoverPoint.x, hoverPoint.y)
+      }
+      ctx.stroke()
+      ctx.restore()
+
+      ctx.save()
+      ctx.fillStyle = '#0ea5e9'
+      ctx.strokeStyle = '#e0f2fe'
+      ctx.lineWidth = Math.max(1 / zoom, 0.75)
+      points.forEach((point, index) => {
+        ctx.beginPath()
+        const radius = index === 0 ? snapRadius : handleRadius
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      })
       ctx.restore()
     }
 
@@ -301,7 +378,21 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       ctx.strokeRect(0, 0, currentLayer.canvas.width, currentLayer.canvas.height)
       ctx.restore()
     }
-  }, [activeTool, brushSize, canvasHeight, canvasWidth, currentLayer, currentTask, hoverPoint, layers, pendingCrop, renderVersion, zoom])
+  }, [
+    activeTool,
+    brushSize,
+    canvasHeight,
+    canvasWidth,
+    cropMode,
+    currentLayer,
+    currentTask,
+    hoverPoint,
+    layers,
+    pendingCrop,
+    pendingPolygon,
+    renderVersion,
+    zoom,
+  ])
 
   const viewStyle = useMemo(
     () => ({
@@ -517,6 +608,16 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
     }
 
     if (activeTool === 'crop') {
+      if (cropMode === 'polygon') {
+        if (pendingPolygon?.closed) {
+          return
+        }
+        const result = addPolygonPoint(point)
+        if (result.closed) {
+          setStatusMessage('多边形已闭合，按 Enter 或点击"应用裁剪"完成')
+        }
+        return
+      }
       cropStartRef.current = point
       setPendingCrop({ x: point.x, y: point.y, width: 1, height: 1 })
     }
@@ -585,7 +686,7 @@ export function EditorCanvas({ compositeCanvasRef }: EditorCanvasProps) {
       return
     }
 
-    if (activeTool === 'crop' && cropStartRef.current) {
+    if (activeTool === 'crop' && cropMode === 'rect' && cropStartRef.current) {
       setPendingCrop(normalizeRect(cropStartRef.current, point))
     }
   }

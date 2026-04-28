@@ -1,5 +1,6 @@
 export type ToolType = 'move' | 'brush' | 'eraser' | 'eyedropper' | 'fill' | 'crop' | 'text'
 export type LayerKind = 'bitmap' | 'text'
+export type CropMode = 'rect' | 'polygon'
 
 export interface Point {
   x: number
@@ -11,6 +12,11 @@ export interface CropRect {
   y: number
   width: number
   height: number
+}
+
+export interface CropPolygon {
+  points: Point[]
+  closed: boolean
 }
 
 export interface TextLayerData {
@@ -72,6 +78,8 @@ export interface EditorTask {
   panX: number
   panY: number
   pendingCrop: CropRect | null
+  cropMode: CropMode
+  pendingPolygon: CropPolygon | null
   hoverPoint: Point | null
   renderVersion: number
   lastExportPath: string | null

@@ -366,3 +366,51 @@ export const cropLayerCanvas = (layer: LayerModel, rect: CropRect) => {
   ctx.drawImage(layer.canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height)
   return next
 }
+
+export const getPolygonBoundingRect = (points: Point[]): CropRect => {
+  if (!points.length) {
+    return { x: 0, y: 0, width: 0, height: 0 }
+  }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const point of points) {
+    if (point.x < minX) minX = point.x
+    if (point.y < minY) minY = point.y
+    if (point.x > maxX) maxX = point.x
+    if (point.y > maxY) maxY = point.y
+  }
+  const x = Math.floor(minX)
+  const y = Math.floor(minY)
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.ceil(maxX) - x),
+    height: Math.max(1, Math.ceil(maxY) - y),
+  }
+}
+
+export const cropLayerByPolygon = (layer: LayerModel, points: Point[], rect: CropRect) => {
+  const next = createCanvas(rect.width, rect.height)
+  const ctx = next.getContext('2d')
+  if (!ctx || points.length < 3) {
+    return layer.canvas
+  }
+  ctx.save()
+  ctx.beginPath()
+  points.forEach((point, index) => {
+    const x = point.x - rect.x
+    const y = point.y - rect.y
+    if (index === 0) {
+      ctx.moveTo(x, y)
+    } else {
+      ctx.lineTo(x, y)
+    }
+  })
+  ctx.closePath()
+  ctx.clip()
+  ctx.drawImage(layer.canvas, -rect.x, -rect.y)
+  ctx.restore()
+  return next
+}
